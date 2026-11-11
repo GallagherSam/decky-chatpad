@@ -23,12 +23,13 @@ Built for MMO chat. The motivating case is World of Warcraft played in Gaming Mo
 
 ## Install (sideload)
 
-The plugin isn't in the Decky store yet.
+Chatpad isn't in the Decky store, so you install it from a zip. **See [INSTALL.md](INSTALL.md) for the full step-by-step guide**, from installing Decky through pairing your phone, plus troubleshooting.
 
-1. Install Decky Loader: in Desktop Mode, download the installer from <https://decky.xyz> and run it.
-2. Turn on developer mode: in Gaming Mode open the QAM (`...` button), go to Decky, then the gear icon, then General, and enable **Developer mode**.
-3. Copy `Chatpad.zip` to the Deck, for example to `~/Downloads`.
-4. In Decky settings, open **Developer**, choose **Install Plugin from ZIP File**, pick `Chatpad.zip` and confirm.
+The short version:
+
+1. Install [Decky Loader](https://decky.xyz) and turn on **Developer mode** in Decky's settings.
+2. Download `Chatpad.zip` from the [latest release](https://github.com/GallagherSam/decky-chatpad/releases/latest).
+3. In Decky settings, open **Developer**, choose **Install Plugin from ZIP File**, and pick the zip.
 
 ### Building the zip yourself
 
@@ -113,3 +114,5 @@ The backend uses only the Python standard library. Decky's bundled interpreter s
 ## License
 
 MIT. See [LICENSE](LICENSE). The build scaffolding comes from [decky-plugin-template](https://github.com/SteamDeckHomebrew/decky-plugin-template) (BSD-3-Clause, notice included).
+
+Chatpad was built with AI assistance (Claude) and tested on a real Steam Deck with World of Warcraft.
