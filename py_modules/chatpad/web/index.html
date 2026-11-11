@@ -63,16 +63,33 @@
   #toast.show { opacity: 1; transform: none; }
   #toast.ok { border-color: var(--ok); } #toast.err { border-color: var(--err); }
   .help { color: var(--muted); font-size: 13px; margin-top: 22px; }
+  .seg { display: flex; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
+  .seg button { border: 0; background: transparent; min-height: 38px; padding: 6px 14px; border-radius: 9px;
+    color: var(--muted); font-weight: 600; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .fieldhint { color: var(--muted); font-size: 14px; padding: 4px 2px 12px; display: none; }
+  .field .fieldhint { display: block; }
+  .field .chips, .field .prefix { display: none; }
+  .field .chatonly { display: none; }
+  .chatmode .fieldonly { display: none; }
+  .keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .keys button { min-height: 44px; padding: 6px 2px; font-size: 14px; border-radius: 10px; color: var(--muted); }
+  .keys button.danger { color: var(--warn); }
 </style>
 </head>
 <body>
 <header>
   <span id="dot" class="dot" title="connection"></span>
   <h1>Chatpad</h1>
+  <div class="seg" role="group" aria-label="Mode">
+    <button id="modeChat" data-mode="chat">Chat</button><button id="modeField" data-mode="field">Field</button>
+  </div>
   <button id="editBtn" class="ghost">Edit</button>
 </header>
 
 <div id="chips" class="chips"></div>
+<div class="fieldhint">Field mode: select the box on the Deck with the controller first. Text is typed straight
+into it (no chat key).</div>
 
 <div class="compose">
   <div id="prefix" class="prefix"></div>
@@ -83,7 +100,16 @@
 </div>
 <div class="actions">
   <label class="toggle"><input id="enter" type="checkbox" checked> Enter</label>
+  <label class="toggle fieldonly"><input id="clearFirst" type="checkbox"> Clear first</label>
   <button id="send" class="send">Send</button>
+</div>
+
+<div class="keys" id="keys">
+  <button data-key="tab">Tab</button>
+  <button data-key="shift_tab">&#8679;Tab</button>
+  <button data-key="enter">Enter</button>
+  <button data-key="esc">Esc</button>
+  <button data-key="clear" class="danger">Clear</button>
 </div>
 
 <h2>Quick phrases <button id="savePhrase">+ Save text</button></h2>
@@ -92,9 +118,11 @@
 <h2>Recent</h2>
 <div id="history" class="history"></div>
 
-<p class="help">Channel chips add a prefix; tap the selected one again to clear it. Phrases send instantly with
-the selected channel. Recent messages resend exactly as typed. "Enter" off = type the text but don't submit it.
-In Edit mode you can add or remove chips and phrases.</p>
+<p class="help"><b>Chat</b> opens chat, types, and presses Enter. <b>Field</b> types into whatever box is selected
+on the Deck (Auction House search, etc.); "Clear first" empties it before typing. Channel chips add a prefix (Chat
+mode); tap the selected one again to clear it. Phrases send instantly. Recent messages resend as typed. "Enter" off =
+type the text but don't submit it. The key row presses one key per tap; Clear empties the selected box. In Edit mode
+you can add or remove chips and phrases.</p>
 
 <div id="toast"></div>
 
@@ -107,12 +135,17 @@ In Edit mode you can add or remove chips and phrases.</p>
   if (params.get("t")) localStorage.setItem("chatpad.t", token);
 
   var $ = function (id) { return document.getElementById(id); };
-  var msg = $("msg"), sendBtn = $("send"), enterBox = $("enter");
-  var state = { chips: [], phrases: [], history: [] };
+  var msg = $("msg"), sendBtn = $("send"), enterBox = $("enter"), clearBox = $("clearFirst");
+  var state = { chips: [], phrases: [], history: [], mode: "chat", clearBefore: false };
   var selected = localStorage.getItem("chatpad.chip");
   if (selected === null) selected = "";
   var editing = false, busy = false;
-  enterBox.checked = localStorage.getItem("chatpad.enter") !== "0";
+  // Enter on/off is remembered per mode: chat usually submits, a field often shouldn't.
+  function loadEnter() {
+    var v = localStorage.getItem("chatpad.enter." + state.mode);
+    if (v === null && state.mode === "chat") v = localStorage.getItem("chatpad.enter");  // v0.1 key
+    enterBox.checked = v === null ? state.mode === "chat" : v !== "0";
+  }
 
   var SMART = { "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
     "“": '"', "”": '"', "„": '"', "‟": '"', "″": '"',
@@ -167,6 +200,15 @@ In Edit mode you can add or remove chips and phrases.</p>
 
   function render() {
     document.body.classList.toggle("editing", editing);
+    var field = state.mode === "field";
+    document.body.classList.toggle("field", field);
+    document.body.classList.toggle("chatmode", !field);
+    $("modeChat").className = field ? "" : "on";
+    $("modeField").className = field ? "on" : "";
+    clearBox.checked = !!state.clearBefore;
+    msg.placeholder = field ? "Text for the selected box..." : "Type or dictate a message...";
+    $("hint").textContent = field ? "Return types it. Close the Deck's quick menu first."
+                                  : "Return sends. Close the Deck's quick menu first.";
     $("editBtn").textContent = editing ? "Done" : "Edit";
     var chips = $("chips"); chips.textContent = "";
     var known = false;
@@ -200,7 +242,7 @@ In Edit mode you can add or remove chips and phrases.</p>
     if (!state.phrases.length) ph.appendChild(el("div", "empty", "No phrases yet. Type one and tap + Save text."));
     state.phrases.forEach(function (p) {
       var b = el("button", "phrase", p);
-      b.addEventListener("click", function () { if (!editing) send(selected + p, true); });
+      b.addEventListener("click", function () { if (!editing) send(prefix() + p, true); });
       b.appendChild(delBadge(function () { editList("phrases", "remove", p); }));
       ph.appendChild(b);
     });
@@ -215,7 +257,8 @@ In Edit mode you can add or remove chips and phrases.</p>
     update();
   }
 
-  function composed() { return normalize(selected + msg.value); }
+  function prefix() { return state.mode === "field" ? "" : selected; }
+  function composed() { return normalize(prefix() + msg.value); }
 
   function update() {
     var n = composed();
@@ -235,19 +278,41 @@ In Edit mode you can add or remove chips and phrases.</p>
     if (!n.text.trim()) return;
     if (n.text.trim().length > MAX) { toast("Too long for chat (" + n.text.trim().length + "/" + MAX + ")", "err"); return; }
     busy = true; update();
-    api("POST", "/api/send", { text: text, enter: enterBox.checked }).then(function (r) {
+    var field = state.mode === "field";
+    api("POST", "/api/send", { text: text, enter: enterBox.checked, mode: state.mode,
+                               clear: field && clearBox.checked }).then(function (r) {
       busy = false;
       if (r.ok) {
         setConn(true);
         if (!fromShortcut) msg.value = "";
         state.history = r.history || state.history;
-        toast("Sent" + (r.replaced ? " (" + r.replaced + " replaced with ?)" : ""), "ok");
+        toast((field ? "Typed" : "Sent") + (r.cleared ? " (cleared first)" : "") + (r.replaced ? " (" + r.replaced + " replaced with ?)" : ""), "ok");
         render();
       } else {
         setConn(r._status !== 0 && r._status !== 401);
         toast(r.error || "Failed", "err");
         update();
       }
+    });
+  }
+
+  function setPrefs(p) {
+    api("POST", "/api/prefs", p).then(function (r) {
+      if (r.ok) { state = r; loadEnter(); render(); } else { toast(r.error || "Failed", "err"); load(); }
+    });
+  }
+
+  function setMode(m) {
+    if (m === state.mode) return;
+    state.mode = m; loadEnter(); render();  // optimistic; the Deck confirms
+    setPrefs({ mode: m });
+  }
+
+  var KEY_NAMES = { tab: "Tab", shift_tab: "Shift+Tab", enter: "Enter", esc: "Esc", clear: "Cleared" };
+  function pressKey(k) {
+    api("POST", "/api/key", { key: k }).then(function (r) {
+      if (r.ok) { setConn(true); toast(KEY_NAMES[k] || k, "ok"); }
+      else { setConn(r._status !== 0 && r._status !== 401); toast(r.error || "Failed", "err"); }
     });
   }
 
@@ -261,7 +326,7 @@ In Edit mode you can add or remove chips and phrases.</p>
     if (!token) { setConn(false); toast("No token. Scan the QR code in the Deck's Chatpad panel.", "err"); return; }
     api("GET", "/api/state").then(function (r) {
       setConn(r.ok);
-      if (r.ok) { state = r; MAX = r.maxChars || MAX; render(); } else toast(r.error || "Failed to load", "err");
+      if (r.ok) { state = r; MAX = r.maxChars || MAX; loadEnter(); render(); } else toast(r.error || "Failed to load", "err");
     });
   }
 
@@ -269,11 +334,19 @@ In Edit mode you can add or remove chips and phrases.</p>
   msg.addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (!sendBtn.disabled) send(selected + msg.value, false);
+      if (!sendBtn.disabled) send(prefix() + msg.value, false);
     }
   });
-  sendBtn.addEventListener("click", function () { send(selected + msg.value, false); });
-  enterBox.addEventListener("change", function () { localStorage.setItem("chatpad.enter", enterBox.checked ? "1" : "0"); });
+  sendBtn.addEventListener("click", function () { send(prefix() + msg.value, false); });
+  enterBox.addEventListener("change", function () {
+    localStorage.setItem("chatpad.enter." + state.mode, enterBox.checked ? "1" : "0");
+  });
+  clearBox.addEventListener("change", function () { setPrefs({ clearBefore: clearBox.checked }); });
+  $("modeChat").addEventListener("click", function () { setMode("chat"); });
+  $("modeField").addEventListener("click", function () { setMode("field"); });
+  Array.prototype.forEach.call(document.querySelectorAll("#keys button"), function (b) {
+    b.addEventListener("click", function () { pressKey(b.getAttribute("data-key")); });
+  });
   $("editBtn").addEventListener("click", function () { editing = !editing; render(); });
   $("savePhrase").addEventListener("click", function () {
     var t = msg.value.trim();
@@ -281,6 +354,8 @@ In Edit mode you can add or remove chips and phrases.</p>
     editList("phrases", "add", t);
   });
   document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+  window.addEventListener("focus", load);
+  loadEnter(); render();
   load();
 })();
 </script>

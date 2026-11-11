@@ -10,7 +10,8 @@ from chatpad.server import ChatpadServer
 from chatpad.settings import Settings
 from chatpad.uinput import UInputKeyboard
 
-SETTABLE = ("open_key", "key_delay_ms", "open_delay_ms", "port")
+SETTABLE = ("open_key", "key_delay_ms", "open_delay_ms", "port", "mode", "clear_before_typing",
+            "clear_method", "clear_backspace_count")
 
 
 class Plugin:
@@ -81,6 +82,10 @@ class Plugin:
             "openKey": s["open_key"],
             "keyDelayMs": s["key_delay_ms"],
             "openDelayMs": s["open_delay_ms"],
+            "mode": s["mode"],
+            "clearBefore": s["clear_before_typing"],
+            "clearMethod": s["clear_method"],
+            "clearBackspaceCount": s["clear_backspace_count"],
             "sends": self.core.sends,
             "lastSend": self.core.last_send,
         }

@@ -26,6 +26,8 @@ KEY_TAB = 15
 KEY_LEFTBRACE = 26
 KEY_RIGHTBRACE = 27
 KEY_ENTER = 28
+KEY_LEFTCTRL = 29
+KEY_A = 30
 KEY_SEMICOLON = 39
 KEY_APOSTROPHE = 40
 KEY_GRAVE = 41
@@ -35,10 +37,11 @@ KEY_COMMA = 51
 KEY_DOT = 52
 KEY_SLASH = 53
 KEY_SPACE = 57
+KEY_END = 107
 
 _LETTERS = {
     "q": 16, "w": 17, "e": 18, "r": 19, "t": 20, "y": 21, "u": 22, "i": 23, "o": 24, "p": 25,
-    "a": 30, "s": 31, "d": 32, "f": 33, "g": 34, "h": 35, "j": 36, "k": 37, "l": 38,
+    "a": KEY_A, "s": 31, "d": 32, "f": 33, "g": 34, "h": 35, "j": 36, "k": 37, "l": 38,
     "z": 44, "x": 45, "c": 46, "v": 47, "b": 48, "n": 49, "m": 50,
 }
 
@@ -75,7 +78,8 @@ for _c, _k in _SHIFTED.items():
     KEYMAP[_c] = Stroke(_k, True)
 
 # Every keycode the virtual keyboard must advertise.
-ALL_KEYCODES = sorted({s.code for s in KEYMAP.values()} | {KEY_ENTER, KEY_LEFTSHIFT, KEY_ESC, KEY_BACKSPACE, KEY_TAB})
+ALL_KEYCODES = sorted({s.code for s in KEYMAP.values()}
+                      | {KEY_ENTER, KEY_LEFTSHIFT, KEY_LEFTCTRL, KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_END})
 
 # Characters phone keyboards / autocorrect commonly produce.
 _SMART = {

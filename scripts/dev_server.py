@@ -13,12 +13,14 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "py_modules"))
 
 from chatpad.core import ChatpadCore  # noqa: E402
-from chatpad.keymap import KEY_ENTER, KEY_LEFTSHIFT, KEYMAP  # noqa: E402
+from chatpad.keymap import (KEY_BACKSPACE, KEY_END, KEY_ENTER, KEY_ESC, KEY_LEFTCTRL, KEY_LEFTSHIFT,  # noqa: E402
+                            KEY_TAB, KEYMAP)
 from chatpad.netinfo import primary_ip  # noqa: E402
 from chatpad.server import ChatpadServer  # noqa: E402
 from chatpad.settings import Settings  # noqa: E402
 
 REV = {(s.code, s.shift): ch for ch, s in KEYMAP.items()}
+NAMES = {KEY_ENTER: "<ENTER>\n", KEY_TAB: "<TAB>", KEY_ESC: "<ESC>", KEY_BACKSPACE: "<BS>", KEY_END: "<END>"}
 
 
 class PrintKeyboard:
@@ -26,6 +28,7 @@ class PrintKeyboard:
 
     def __init__(self):
         self.shift = False
+        self.ctrl = False
 
     def open(self):
         pass
@@ -36,8 +39,15 @@ class PrintKeyboard:
     def key(self, code, down):
         if code == KEY_LEFTSHIFT:
             self.shift = down
+        elif code == KEY_LEFTCTRL:
+            self.ctrl = down
         elif down:
-            sys.stdout.write("⏎\n" if code == KEY_ENTER else REV.get((code, self.shift), "?"))
+            name = NAMES.get(code) or REV.get((code, self.shift), "?")
+            if self.ctrl:
+                name = f"<CTRL+{name.upper()}>"
+            elif self.shift and code in NAMES:
+                name = f"<SHIFT+{name.strip('<>')}>"
+            sys.stdout.write(name)
             sys.stdout.flush()
 
 

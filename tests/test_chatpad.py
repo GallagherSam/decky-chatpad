@@ -11,12 +11,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "py_modules"))
 
 from chatpad import keymap  # noqa: E402
 from chatpad.core import ChatpadCore  # noqa: E402
-from chatpad.keymap import KEY_ENTER, KEY_LEFTSHIFT, KEY_SLASH, normalize_text, text_to_strokes  # noqa: E402
+from chatpad.keymap import (KEY_A, KEY_BACKSPACE, KEY_END, KEY_ENTER, KEY_ESC, KEY_LEFTCTRL,  # noqa: E402
+                            KEY_LEFTSHIFT, KEY_SLASH, KEY_TAB, normalize_text, text_to_strokes)
 from chatpad.netinfo import parse_ip_addr  # noqa: E402
 from chatpad.security import FailureThrottle, RateLimiter, TokenManager  # noqa: E402
 from chatpad.server import ChatpadServer  # noqa: E402
 from chatpad.settings import DEFAULTS, Settings  # noqa: E402
-from chatpad.uinput import INPUT_EVENT, USER_DEV, RecordingKeyboard, Typer  # noqa: E402
+from chatpad.uinput import INPUT_EVENT, KEY_ACTIONS, USER_DEV, RecordingKeyboard, Typer  # noqa: E402
 
 
 class FakeClock:
@@ -27,22 +28,36 @@ class FakeClock:
         return self.t
 
 
+NAMED = {KEY_ENTER: "ENTER", KEY_TAB: "TAB", KEY_ESC: "ESC", KEY_BACKSPACE: "BS", KEY_END: "END"}
+
+
 def keys_to_text(events):
-    """Decode recorded (code, down) events back into text using the US keymap."""
+    """Decode recorded (code, down) events back into text using the US keymap.
+    Special keys decode as <ENTER>, <TAB>, <S-TAB>, <ESC>, <BS>, <END>; Ctrl combos as <C-a>."""
     rev = {}
     for ch, s in keymap.KEYMAP.items():
         rev[(s.code, s.shift)] = ch
-    shift = False
+    shift = ctrl = False
     out = []
     for code, down in events:
         if code == KEY_LEFTSHIFT:
             shift = down
-        elif code == KEY_ENTER:
+        elif code == KEY_LEFTCTRL:
+            ctrl = down
+        elif code in NAMED:
             if down:
-                out.append("<ENTER>")
+                out.append("<" + ("S-" if shift else "") + ("C-" if ctrl else "") + NAMED[code] + ">")
         elif down:
-            out.append(rev[(code, shift)])
+            ch = rev[(code, shift)]
+            out.append(f"<C-{ch}>" if ctrl else ch)
     return "".join(out)
+
+
+def held_after(events):
+    held = set()
+    for code, down in events:
+        (held.add if down else held.discard)(code)
+    return held
 
 
 class KeymapTests(unittest.TestCase):
@@ -89,6 +104,19 @@ class KeymapTests(unittest.TestCase):
 
     def test_newlines_become_spaces(self):
         self.assertEqual(normalize_text("a\nb\tc")[0], "a b c")
+
+    def test_special_keycodes(self):
+        # linux/input-event-codes.h
+        self.assertEqual((KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_ENTER), (1, 14, 15, 28))
+        self.assertEqual((KEY_LEFTCTRL, KEY_A, KEY_LEFTSHIFT, KEY_END), (29, 30, 42, 107))
+        for code in (KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_ENTER, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_END):
+            self.assertIn(code, keymap.ALL_KEYCODES)
+
+    def test_text_never_contains_control_keys(self):
+        # Ctrl/Tab/Esc/BackSpace are only reachable through the key row, never through typed text.
+        codes = {s.code for s in keymap.KEYMAP.values()}
+        for code in (KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_ENTER, KEY_LEFTCTRL, KEY_END):
+            self.assertNotIn(code, codes)
 
     def test_text_to_strokes_rejects_unmapped(self):
         with self.assertRaises(ValueError):
@@ -139,6 +167,78 @@ class TyperTests(unittest.TestCase):
         with self.assertRaises(OSError):
             Typer(kb, sleep=lambda s: None).type_message(text_to_strokes("A"), open_key="none")
         self.assertEqual(kb.events[-1], (KEY_LEFTSHIFT, False))
+
+
+class TyperKeyTests(unittest.TestCase):
+    def press(self, action, **kw):
+        kb = RecordingKeyboard()
+        Typer(kb, sleep=lambda s: None).press(action, **kw)
+        return kb
+
+    def test_ctrl_a_backspace_clear(self):
+        kb = self.press("clear", clear_method="select_all")
+        self.assertEqual(kb.events, [(KEY_LEFTCTRL, True), (KEY_A, True), (KEY_A, False), (KEY_LEFTCTRL, False),
+                                     (KEY_BACKSPACE, True), (KEY_BACKSPACE, False)])
+        self.assertEqual(keys_to_text(kb.events), "<C-a><BS>")
+
+    def test_backspace_clear(self):
+        kb = self.press("clear", clear_method="backspace", clear_count=5)
+        self.assertEqual(keys_to_text(kb.events), "<END>" + "<BS>" * 5)
+        self.assertNotIn(KEY_LEFTCTRL, [c for c, _ in kb.events])
+
+    def test_backspace_clear_uses_key_delay(self):
+        sleeps = []
+        Typer(RecordingKeyboard(), sleep=sleeps.append).press("clear", clear_method="backspace", clear_count=3,
+                                                              key_delay_ms=20)
+        self.assertTrue(sleeps)
+        self.assertTrue(all(abs(s - 0.02) < 1e-9 or abs(s - 0.01) < 1e-9 for s in sleeps))
+        self.assertAlmostEqual(sum(sleeps), 4 * 0.03)  # End + 3 BackSpace, 30 ms each
+
+    def test_named_keys(self):
+        self.assertEqual(keys_to_text(self.press("tab").events), "<TAB>")
+        self.assertEqual(keys_to_text(self.press("shift_tab").events), "<S-TAB>")
+        self.assertEqual(keys_to_text(self.press("enter").events), "<ENTER>")
+        self.assertEqual(keys_to_text(self.press("esc").events), "<ESC>")
+        kb = self.press("shift_tab")
+        self.assertEqual(kb.events, [(KEY_LEFTSHIFT, True), (KEY_TAB, True), (KEY_TAB, False), (KEY_LEFTSHIFT, False)])
+
+    def test_every_action_balanced(self):
+        for a in KEY_ACTIONS:
+            for method in ("select_all", "backspace"):
+                kb = self.press(a, clear_method=method, clear_count=3)
+                self.assertEqual(held_after(kb.events), set(), (a, method))
+                self.assertTrue(kb.opened)
+
+    def test_unknown_action_rejected(self):
+        kb = RecordingKeyboard()
+        for bad in ("f1", "ctrl_a", "", None, "TAB"):
+            with self.assertRaises(ValueError):
+                Typer(kb, sleep=lambda s: None).press(bad)
+        with self.assertRaises(ValueError):
+            Typer(kb, sleep=lambda s: None).press("clear", clear_method="nuke")
+        self.assertEqual(kb.events, [])
+
+    def test_ctrl_released_on_error(self):
+        class Boom(RecordingKeyboard):
+            def key(self, code, down):
+                super().key(code, down)
+                if code == KEY_A and down:
+                    raise OSError("device gone")
+        kb = Boom()
+        with self.assertRaises(OSError):
+            Typer(kb, sleep=lambda s: None).press("clear")
+        self.assertIn((KEY_LEFTCTRL, False), kb.events[-2:])
+        self.assertNotIn(KEY_LEFTCTRL, held_after(kb.events) - {KEY_A})
+
+    def test_type_message_with_clear(self):
+        kb = RecordingKeyboard()
+        Typer(kb, sleep=lambda s: None).type_message(text_to_strokes("Copper Ore"), open_key="none",
+                                                     press_enter=True, clear="select_all")
+        self.assertEqual(keys_to_text(kb.events), "<C-a><BS>Copper Ore<ENTER>")
+        kb = RecordingKeyboard()
+        Typer(kb, sleep=lambda s: None).type_message(text_to_strokes("x"), open_key="none", press_enter=False,
+                                                     clear="backspace", clear_count=2)
+        self.assertEqual(keys_to_text(kb.events), "<END><BS><BS>x")
 
 
 class StructTests(unittest.TestCase):
@@ -213,6 +313,38 @@ class SettingsTests(unittest.TestCase):
             s.set("open_key", "tab")
         with self.assertRaises(KeyError):
             s.set("nope", 1)
+
+    def test_new_settings_defaults_and_persist(self):
+        s = Settings(self.path)
+        self.assertEqual(s.get("mode"), "chat")
+        self.assertFalse(s.get("clear_before_typing"))
+        self.assertEqual(s.get("clear_method"), "select_all")
+        self.assertEqual(s.get("clear_backspace_count"), 64)
+        s.set("mode", "field")
+        s.set("clear_before_typing", True)
+        s.set("clear_method", "backspace")
+        s.set("clear_backspace_count", 32)
+        s2 = Settings(self.path)
+        self.assertEqual((s2.get("mode"), s2.get("clear_before_typing"), s2.get("clear_method"),
+                          s2.get("clear_backspace_count")), ("field", True, "backspace", 32))
+
+    def test_new_settings_validation(self):
+        s = Settings(self.path)
+        with self.assertRaises(ValueError):
+            s.set("mode", "macro")
+        with self.assertRaises(ValueError):
+            s.set("clear_method", "ctrl+z")
+        with self.assertRaises(ValueError):
+            s.set("clear_before_typing", "yes")
+        self.assertEqual(s.set("clear_backspace_count", 0), 1)
+        self.assertEqual(s.set("clear_backspace_count", 10000), 256)
+
+    def test_v01_settings_file_upgrades(self):
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as f:
+            json.dump({"open_key": "slash", "key_delay_ms": 20, "mode": "bogus"}, f)
+        s = Settings(self.path)
+        self.assertEqual((s.get("open_key"), s.get("key_delay_ms"), s.get("mode")), ("slash", 20, "chat"))
 
     def test_corrupt_file_ignored(self):
         os.makedirs(os.path.dirname(self.path))
@@ -302,6 +434,126 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(self.core.send("hi")[0], 409)
         finally:
             self.core._busy.release()
+
+    def test_field_mode_no_open_key(self):
+        for open_key in ("enter", "slash", "none"):
+            self.core.settings.set("open_key", open_key)
+            self.kb.events.clear()
+            self.clock.t += 2
+            code, r = self.core.send("/Copper Ore", True, "field")
+            self.assertEqual(code, 200)
+            self.assertEqual(r["mode"], "field")
+            # typed verbatim (slash kept), no chat key first
+            self.assertEqual(keys_to_text(self.kb.events), "/Copper Ore<ENTER>")
+
+    def test_field_mode_type_only(self):
+        self.core.send("linen", False, "field")
+        self.assertEqual(keys_to_text(self.kb.events), "linen")
+
+    def test_mode_defaults_to_setting(self):
+        self.core.settings.set("mode", "field")
+        code, r = self.core.send("abc", False)
+        self.assertEqual((code, r["mode"]), (200, "field"))
+        self.assertEqual(keys_to_text(self.kb.events), "abc")
+        self.assertEqual(self.core.last_send["mode"], "field")
+        # an explicit per-send mode wins over the saved one
+        self.kb.events.clear()
+        self.clock.t += 2
+        self.core.send("hi", True, "chat")
+        self.assertEqual(keys_to_text(self.kb.events), "<ENTER>hi<ENTER>")
+
+    def test_bad_mode_and_clear_rejected(self):
+        self.assertEqual(self.core.send("hi", True, "macro")[0], 400)
+        self.assertEqual(self.core.send("hi", True, "field", "yes")[0], 400)
+        self.assertEqual(self.kb.events, [])
+
+    def test_clear_before_typing(self):
+        code, r = self.core.send("Copper Ore", True, "field", True)
+        self.assertTrue(r["cleared"])
+        self.assertEqual(keys_to_text(self.kb.events), "<C-a><BS>Copper Ore<ENTER>")
+        self.core.settings.set("clear_method", "backspace")
+        self.core.settings.set("clear_backspace_count", 4)
+        self.kb.events.clear()
+        self.clock.t += 2
+        self.core.send("Tin", False, "field", True)
+        self.assertEqual(keys_to_text(self.kb.events), "<END><BS><BS><BS><BS>Tin")
+
+    def test_clear_setting_used_when_not_given(self):
+        self.core.settings.set("clear_before_typing", True)
+        self.core.send("Tin", False, "field")
+        self.assertEqual(keys_to_text(self.kb.events), "<C-a><BS>Tin")
+        self.kb.events.clear()
+        self.clock.t += 2
+        self.core.send("Tin", False, "field", False)  # explicit false wins
+        self.assertEqual(keys_to_text(self.kb.events), "Tin")
+
+    def test_clear_ignored_in_chat_mode(self):
+        code, r = self.core.send("hi", True, "chat", True)
+        self.assertFalse(r["cleared"])
+        self.assertEqual(keys_to_text(self.kb.events), "<ENTER>hi<ENTER>")
+
+    def test_press_key(self):
+        for k, expect in (("tab", "<TAB>"), ("shift_tab", "<S-TAB>"), ("enter", "<ENTER>"), ("esc", "<ESC>"),
+                          ("clear", "<C-a><BS>")):
+            self.kb.events.clear()
+            self.clock.t += 1
+            code, r = self.core.press_key(k)
+            self.assertEqual((code, r["key"]), (200, k))
+            self.assertEqual(keys_to_text(self.kb.events), expect)
+        self.core.settings.set("clear_method", "backspace")
+        self.core.settings.set("clear_backspace_count", 3)
+        self.kb.events.clear()
+        self.clock.t += 1
+        self.core.press_key("clear")
+        self.assertEqual(keys_to_text(self.kb.events), "<END><BS><BS><BS>")
+        # key presses don't pollute history / last send
+        self.assertEqual(self.core.history, [])
+        self.assertIsNone(self.core.last_send)
+
+    def test_press_key_rejects_unknown(self):
+        for bad in ("f4", "alt_f4", None, 5, ["tab"], "ctrl_a"):
+            self.assertEqual(self.core.press_key(bad)[0], 400)
+        self.assertEqual(self.kb.events, [])
+
+    def test_press_key_rate_limited(self):
+        self.assertEqual(self.core.press_key("tab")[0], 200)
+        self.assertEqual(self.core.press_key("tab")[0], 429)
+        self.clock.t += 0.25
+        self.assertEqual(self.core.press_key("tab")[0], 200)
+        # separate budget from sends: Clear then Send right away both work
+        self.assertEqual(self.core.send("x", False, "field")[0], 200)
+
+    def test_press_key_busy_and_failure(self):
+        self.core._busy.acquire()
+        try:
+            self.assertEqual(self.core.press_key("tab")[0], 409)
+        finally:
+            self.core._busy.release()
+
+        def boom():
+            raise PermissionError(13, "Permission denied")
+        self.kb.open = boom
+        self.assertEqual(self.core.press_key("esc")[0], 503)
+
+    def test_set_prefs(self):
+        code, st = self.core.set_prefs({"mode": "field", "clearBefore": True})
+        self.assertEqual(code, 200)
+        self.assertEqual((st["mode"], st["clearBefore"]), ("field", True))
+        s2 = Settings(self.core.settings.path)
+        self.assertEqual((s2.get("mode"), s2.get("clear_before_typing")), ("field", True))
+        # invalid values change nothing (validated before anything is saved)
+        self.assertEqual(self.core.set_prefs({"clearBefore": False, "mode": "macro"})[0], 400)
+        self.assertTrue(self.core.settings.get("clear_before_typing"))
+        self.assertEqual(self.core.set_prefs({"clearBefore": "no"})[0], 400)
+        # the phone can't touch QAM-only settings
+        self.assertEqual(self.core.set_prefs({"key_delay_ms": 2, "open_key": "none"})[0], 400)
+        self.assertEqual(self.core.settings.get("key_delay_ms"), 12)
+        self.assertEqual(self.core.set_prefs("field")[0], 400)
+
+    def test_public_state_has_mode(self):
+        st = self.core.public_state()
+        self.assertEqual((st["mode"], st["clearBefore"], st["clearMethod"]), ("chat", False, "select_all"))
+        self.assertEqual(st["keys"], ["tab", "shift_tab", "enter", "esc", "clear"])
 
     def test_edit_lists(self):
         code, st = self.core.edit_list("phrases", "add", "  need heals  ")
@@ -415,6 +667,45 @@ class HttpTests(unittest.TestCase):
         self.assertIn("wts ore", json.loads(body)["phrases"])
         self.assertEqual(self.req("POST", "/api/list", {"kind": "phrases", "action": "add", "item": "x"},
                                   token=None)[0], 401)
+
+    def test_send_field_mode_over_http(self):
+        code, _, body = self.req("POST", "/api/send", {"text": "Copper Ore", "enter": True, "mode": "field",
+                                                       "clear": True})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(keys_to_text(self.kb.events), "<C-a><BS>Copper Ore<ENTER>")
+        self.assertEqual(self.req("POST", "/api/send", {"text": "x", "mode": "nope"})[0], 400)
+
+    def test_key_endpoint(self):
+        code, _, body = self.req("POST", "/api/key", {"key": "shift_tab"})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(keys_to_text(self.kb.events), "<S-TAB>")
+        self.assertEqual(self.req("POST", "/api/key", {"key": "tab"})[0], 429)  # rate-limited
+        self.clock.t += 1
+        self.assertEqual(self.req("POST", "/api/key", {"key": "f12"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/key", {"keys": ["tab", "tab"]})[0], 400)
+        self.assertEqual(self.req("POST", "/api/key", {"key": "tab"}, token=None)[0], 401)
+        self.assertEqual(self.req("POST", "/api/key", {"key": "tab"}, token="wrong")[0], 401)
+        self.assertEqual(keys_to_text(self.kb.events), "<S-TAB>")
+
+    def test_prefs_endpoint_and_state(self):
+        code, _, body = self.req("POST", "/api/prefs", {"mode": "field"})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(json.loads(body)["mode"], "field")
+        st = json.loads(self.req("GET", "/api/state")[2])
+        self.assertEqual(st["mode"], "field")
+        self.assertEqual(self.core.settings.get("mode"), "field")
+        self.assertEqual(self.req("POST", "/api/prefs", {"mode": "chat"}, token=None)[0], 401)
+        self.assertEqual(self.req("POST", "/api/prefs", {"port": 22})[0], 400)
+        self.assertEqual(self.core.settings.get("port"), 8765)
+        # a send without a mode uses the saved one
+        self.req("POST", "/api/send", {"text": "Linen", "enter": False})
+        self.assertEqual(keys_to_text(self.kb.events), "Linen")
+
+    def test_page_has_mode_and_key_row(self):
+        body = self.req("GET", "/", token=None)[2]
+        for needle in (b'data-mode="field"', b'data-key="tab"', b'data-key="shift_tab"', b'data-key="enter"',
+                       b'data-key="esc"', b'data-key="clear"', b'id="clearFirst"', b"/api/key", b"/api/prefs"):
+            self.assertIn(needle, body)
 
     def test_unknown_path(self):
         self.assertEqual(self.req("GET", "/etc/passwd", token=None)[0], 404)

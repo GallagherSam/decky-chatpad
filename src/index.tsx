@@ -21,7 +21,11 @@ interface LastSend {
   ok: boolean;
   error: string | null;
   duration: number;
+  mode?: Mode;
 }
+
+type Mode = "chat" | "field";
+type ClearMethod = "select_all" | "backspace";
 
 interface IpInfo {
   iface: string;
@@ -43,6 +47,10 @@ interface Status {
   openKey: "enter" | "slash" | "none";
   keyDelayMs: number;
   openDelayMs: number;
+  mode: Mode;
+  clearBefore: boolean;
+  clearMethod: ClearMethod;
+  clearBackspaceCount: number;
   sends: number;
   lastSend: LastSend | null;
 }
@@ -57,6 +65,16 @@ const OPEN_KEY_OPTIONS = [
   { data: "enter", label: "Enter (WoW default)" },
   { data: "slash", label: "/ (only for /commands)" },
   { data: "none", label: "None (chat already open)" },
+];
+
+const MODE_OPTIONS = [
+  { data: "chat", label: "Chat (open chat, type, Enter)" },
+  { data: "field", label: "Field (type into focused box)" },
+];
+
+const CLEAR_OPTIONS = [
+  { data: "select_all", label: "Ctrl+A, Backspace" },
+  { data: "backspace", label: "End + Backspace x N" },
 ];
 
 function ago(ts: number): string {
@@ -123,6 +141,19 @@ function Content() {
             onChange={async (v) => setSt(await setEnabled(v))}
           />
         </PanelSectionRow>
+        <PanelSectionRow>
+          <DropdownItem
+            label="Mode"
+            description={
+              st.mode === "field"
+                ? "Types into whatever is focused. Select the field with the controller first."
+                : "Opens chat, types, presses Enter."
+            }
+            rgOptions={MODE_OPTIONS}
+            selectedOption={st.mode}
+            onChange={async (o) => setSt(await setSetting("mode", o.data))}
+          />
+        </PanelSectionRow>
         {!st.uinputOk && (
           <PanelSectionRow>
             <ButtonItem
@@ -176,7 +207,11 @@ function Content() {
       <PanelSection title="Last send">
         <PanelSectionRow>
           <Field
-            label={last ? (last.ok ? `Typed ${last.chars} chars` : "Failed") : "Nothing yet"}
+            label={
+              last
+                ? (last.ok ? `Typed ${last.chars} chars` : "Failed") + (last.mode === "field" ? " (Field)" : "")
+                : "Nothing yet"
+            }
             description={
               last
                 ? `${ago(last.time)}${last.ok ? ` in ${last.duration}s` : ""}: ${last.ok ? last.preview : last.error}` +
@@ -191,6 +226,7 @@ function Content() {
         <PanelSectionRow>
           <DropdownItem
             label="Open chat with"
+            description="Chat mode only"
             rgOptions={OPEN_KEY_OPTIONS}
             selectedOption={st.openKey}
             onChange={async (o) => setSt(await setSetting("open_key", o.data))}
@@ -228,6 +264,39 @@ function Content() {
             onChange={async (v) => setSt(await setSetting("open_delay_ms", v))}
           />
         </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title="Clearing a field">
+        <PanelSectionRow>
+          <ToggleField
+            label="Clear before typing"
+            description="Field mode only. Also switchable on the phone."
+            checked={st.clearBefore}
+            onChange={async (v) => setSt(await setSetting("clear_before_typing", v))}
+          />
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <DropdownItem
+            label="Clear method"
+            description="Use End + Backspace if Ctrl+A doesn't work in a box"
+            rgOptions={CLEAR_OPTIONS}
+            selectedOption={st.clearMethod}
+            onChange={async (o) => setSt(await setSetting("clear_method", o.data))}
+          />
+        </PanelSectionRow>
+        {st.clearMethod === "backspace" && (
+          <PanelSectionRow>
+            <SliderField
+              label="Backspaces"
+              value={st.clearBackspaceCount}
+              min={8}
+              max={256}
+              step={8}
+              showValue
+              onChange={async (v) => setSt(await setSetting("clear_backspace_count", v))}
+            />
+          </PanelSectionRow>
+        )}
       </PanelSection>
     </>
   );

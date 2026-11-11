@@ -1,6 +1,6 @@
 {
   "name": "decky-chatpad",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Type on your phone, text gets typed into the game on your Steam Deck.",
   "type": "module",
   "scripts": {

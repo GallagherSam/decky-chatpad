@@ -9,7 +9,7 @@ Built for MMO chat. The motivating case is World of Warcraft played in Gaming Mo
 1. The plugin's Python backend (running as root) creates a virtual USB keyboard through `/dev/uinput`. It is plain Python with `ioctl`/`struct` and no compiled dependencies.
 2. It serves a small, self-contained web page on your LAN (default port `8765`).
 3. You scan a QR code in the Quick Access Menu with your phone. The link includes a random pairing token.
-4. You type or dictate on the phone and tap **Send**. The Deck presses Enter to open chat, types your text, and presses Enter again.
+4. You type or dictate on the phone and tap **Send**. In **Chat** mode the Deck presses Enter to open chat, types your text, and presses Enter again. In **Field** mode it types straight into whatever text box is selected.
 
 ## Features
 
@@ -18,8 +18,13 @@ Built for MMO chat. The motivating case is World of Warcraft played in Gaming Mo
 - Quick phrases, stored on the Deck, that send in one tap. You can add and remove them from the phone.
 - The last 10 sent messages, tap one to resend it.
 - A "type only" mode: switch off **Enter** to type the text without submitting it.
+- Two modes, one tap to switch at the top of the phone page:
+  - **Chat**: opens chat with the open-chat key, types, optionally presses Enter.
+  - **Field**: types into whatever is focused (Auction House search, mail, a login box, any text field), with no open-chat key. Optional **Clear first** empties the field before typing.
+- A compact key row: **Tab**, **Shift+Tab**, **Enter**, **Esc** and **Clear** (empties the focused field). One tap presses one key.
+- The mode and the "clear first" choice are saved on the Deck, so the phone page and the QAM always agree.
 - A warning when your text contains characters that can't be typed (see Limitations).
-- QAM panel: on/off switch, QR code and URL (LAN and Tailscale IPs), new-pairing-code button, open-chat key (Enter, `/` or none), key delay, delay after opening chat, and the status of the last send.
+- QAM panel: on/off switch, mode (Chat/Field), QR code and URL (LAN and Tailscale IPs), new-pairing-code button, open-chat key (Enter, `/` or none; Chat mode only), key delay, delay after opening chat, clear-before-typing, clear method, and the status of the last send.
 
 ## Install
 
@@ -141,26 +146,57 @@ Tips:
   - `None` is for when you've already opened the chat box yourself.
 - To whisper, tap **Whisper** and type `Name your message`.
 
+### Typing into other fields (Auction House, search boxes)
+
+Chat mode always opens chat first, which is wrong for any other text box. Use Field mode instead:
+
+1. On the Deck, **select the field with the controller** (for example the Auction House search box) so it has a blinking cursor. Chatpad can't do this part for you.
+2. On the phone, tap **Field** at the top. The channel chips disappear, because there's no chat to prefix.
+3. Optional: tick **Clear first** to empty the box before typing. That's handy for redoing an AH search.
+4. Type and tap **Send**. Leave **Enter** on if you want the search to run straight away. In Field mode the Enter checkbox starts off and is remembered separately from Chat mode.
+
+The key row works in either mode:
+
+| Button | Presses |
+|---|---|
+| Tab / ⇧Tab | Tab / Shift+Tab, to move to the next or previous field |
+| Enter | Enter |
+| Esc | Escape, to close a box or the chat line |
+| Clear | Empties the focused field (see below) |
+
+**Clear method** (QAM, under "Clearing a field"):
+
+- **Ctrl+A, Backspace** (default): select all, then delete.
+- **End + Backspace x N**: press End, then BackSpace N times (default 64, up to 256). Use this if Ctrl+A does nothing in a particular edit box. It's slower: 64 backspaces take about a second at the default key delay.
+
+Switch back to **Chat** when you want to talk again.
+
 ## Security model
 
 - The page and API are served over plain HTTP on your LAN. Anyone on the same network can load the page, but every API call needs the pairing token, sent in an `X-Chatpad-Token` header and compared in constant time.
 - A new random token (96 bits) is generated every time the plugin loads. **New pairing code** in the QAM rotates it immediately, which disconnects any phone holding the old link.
 - Bad tokens are counted per IP. After 20 failures in a minute that IP gets locked out for the rest of the minute.
 - Because the token travels in a custom header, browsers send a CORS preflight that Chatpad never approves. Other websites open on your phone can't make requests to it.
-- Limits: 1 message per second, 255 characters (WoW's chat limit), 8 KB request bodies, one message being typed at a time.
-- The only thing the API can do is "type this text, optionally followed by Enter". It can't press arbitrary keys, use modifiers (other than Shift, for capitals and symbols), send macros or move the mouse.
+- Limits: 1 message per second, 255 characters (WoW's chat limit), 8 KB request bodies, one message or key being typed at a time. Key-row buttons are limited to 4 presses per second.
+- The API can do three things: type text (optionally clearing the field first and/or pressing Enter after), press one of five fixed keys (Tab, Shift+Tab, Enter, Esc, Clear), and change the mode. It can't press arbitrary keys or key sequences, send macros or move the mouse. The only modifiers ever used are Shift (capitals, symbols, Shift+Tab) and Ctrl for the fixed Ctrl+A in Clear.
 - Plain HTTP means someone sniffing your Wi-Fi could read your messages and the token. Don't use Chatpad on networks you don't trust. Turn it off in the QAM when you aren't using it.
 - The backend runs as root because only root can open `/dev/uinput`. That's the standard Decky `"flags": ["root"]` mechanism.
 
 ## Blizzard / anti-cheat note
 
-Each tap on the phone types **one** message, exactly as if you'd typed it on a USB keyboard. It doesn't automate gameplay, run on a timer or loop, and it can't send anything you didn't tap Send for. The rate limit enforces this. Treat it like a physical keyboard plugged into the Deck. As always, how you use any input device is your responsibility under the game's terms of service.
+Each tap on the phone types **one** message or presses **one** key, exactly as if you'd done it on a USB keyboard. There's deliberately no macro or key-sequence API. It doesn't automate gameplay, run on a timer or loop, and it can't send anything you didn't tap Send for. The rate limit enforces this. Treat it like a physical keyboard plugged into the Deck. As always, how you use any input device is your responsibility under the game's terms of service.
 
-## Limitations (v1)
+## Limitations
 
 - **ASCII only, US layout.** Curly quotes, dashes and the ellipsis that phone keyboards insert are converted to plain ASCII, and accents are stripped (`café` becomes `cafe`). Anything else, such as emoji or CJK text, is typed as `?`, and the page warns you before you send. If the Deck's keyboard layout isn't US, symbols may come out wrong.
 - The phone and the Deck must be able to reach each other: same Wi-Fi, or a tailnet.
+- **Chatpad can't focus a field for you.** In Field mode, keys go to whatever has focus. Select the box with the controller first. If nothing has focus, keypresses may trigger game keybinds instead (for example Tab targets an enemy in WoW, Esc opens the game menu).
+- Ctrl+A may not work in every WoW edit box. If **Clear** doesn't empty a box, switch the clear method to End + Backspace in the QAM.
 - Typing speed is about 40 characters per second at the default delay, so a 255-character message takes around 6 seconds.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
@@ -176,7 +212,7 @@ Code layout:
   - `uinput.py`: virtual keyboard and typer.
   - `security.py`: token, rate limiting, failure throttle.
   - `server.py`: stdlib `http.server`.
-  - `core.py`: send logic, history, phrases.
+  - `core.py`: send logic, modes, key row, history, phrases.
   - `settings.py`: JSON settings.
   - `netinfo.py`: IP detection.
   - `web/index.html`: the phone page.

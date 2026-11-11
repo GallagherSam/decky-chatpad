@@ -18,6 +18,10 @@ DEFAULTS: Dict[str, Any] = {
     "open_key": "enter",       # enter | slash | none
     "key_delay_ms": 12,
     "open_delay_ms": 120,
+    "mode": "chat",            # chat: open chat, type, Enter | field: type into whatever is focused
+    "clear_before_typing": False,  # Field mode only
+    "clear_method": "select_all",  # select_all (Ctrl+A, BackSpace) | backspace (End + N x BackSpace)
+    "clear_backspace_count": 64,
     # WoW Classic-era defaults. prefix is inserted at the start of the textarea.
     "chips": [
         {"label": "Say", "prefix": "/s "},
@@ -37,7 +41,11 @@ LIMITS = {
     "key_delay_ms": (2, 100),
     "open_delay_ms": (0, 1000),
     "port": (1024, 65535),
+    "clear_backspace_count": (1, 256),
 }
+
+MODES = ("chat", "field")
+CLEAR_METHODS = ("select_all", "backspace")
 
 
 def _clamp_int(value: Any, lo: int, hi: int) -> int:
@@ -46,8 +54,18 @@ def _clamp_int(value: Any, lo: int, hi: int) -> int:
 
 
 def validate(key: str, value: Any) -> Any:
-    if key == "enabled":
+    if key in ("enabled", "clear_before_typing"):
+        if not isinstance(value, (bool, int)):
+            raise ValueError(f"{key} must be true or false")
         return bool(value)
+    if key == "mode":
+        if value not in MODES:
+            raise ValueError("mode must be chat or field")
+        return value
+    if key == "clear_method":
+        if value not in CLEAR_METHODS:
+            raise ValueError("clear_method must be select_all or backspace")
+        return value
     if key in LIMITS:
         lo, hi = LIMITS[key]
         return _clamp_int(value, lo, hi)

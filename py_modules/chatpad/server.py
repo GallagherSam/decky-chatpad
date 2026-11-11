@@ -97,7 +97,7 @@ def make_handler(core: ChatpadCore, log: logging.Logger, page_path: str):
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if path not in ("/api/send", "/api/list"):
+            if path not in ("/api/send", "/api/list", "/api/key", "/api/prefs"):
                 self._json(404, {"ok": False, "error": "Not found"})
                 return
             # Read the body first so keep-alive stays in sync, then authenticate.
@@ -107,12 +107,22 @@ def make_handler(core: ChatpadCore, log: logging.Logger, page_path: str):
             if not self._auth():
                 return
             if path == "/api/send":
-                code, obj = core.send(data.get("text"), data.get("enter", True))
+                code, obj = core.send(data.get("text"), data.get("enter", True), data.get("mode"), data.get("clear"))
                 if code == 200:
-                    log.info("typed %d chars (replaced %d)", len(obj["typed"]), obj["replaced"])
+                    log.info("typed %d chars in %s mode (replaced %d, cleared %s)", len(obj["typed"]), obj["mode"],
+                             obj["replaced"], obj["cleared"])
                 elif code == 503:
                     log.error("send failed: %s", obj.get("error"))
                 self._json(code, obj)
+            elif path == "/api/key":
+                code, obj = core.press_key(data.get("key"))
+                if code == 200:
+                    log.info("pressed %s", obj["key"])
+                elif code == 503:
+                    log.error("key failed: %s", obj.get("error"))
+                self._json(code, obj)
+            elif path == "/api/prefs":
+                self._json(*core.set_prefs(data))
             else:
                 self._json(*core.edit_list(data.get("kind"), data.get("action"), data.get("item")))
 

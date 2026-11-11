@@ -8,23 +8,28 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .keymap import normalize_text, text_to_strokes
 from .security import FailureThrottle, RateLimiter, TokenManager
-from .settings import MAX_ITEM_LEN, MAX_LIST, Settings
-from .uinput import Typer
+from .settings import MAX_ITEM_LEN, MAX_LIST, MODES, Settings
+from .uinput import KEY_ACTIONS, Typer
 
 MAX_CHARS = 255  # WoW chat message limit
 HISTORY_SIZE = 10
+KEY_MIN_INTERVAL = 0.25  # key-row buttons: one press per tap, but Tab-Tab-Tab shouldn't feel sluggish
+
+# Settings the phone page may change (everything else is QAM-only).
+PHONE_PREFS = {"mode": "mode", "clearBefore": "clear_before_typing"}
 
 Result = Tuple[int, Dict[str, Any]]
 
 
 class ChatpadCore:
     def __init__(self, settings: Settings, keyboard, *, sleep=time.sleep, clock=time.monotonic,
-                 min_interval: float = 1.0) -> None:
+                 min_interval: float = 1.0, key_min_interval: float = KEY_MIN_INTERVAL) -> None:
         self.settings = settings
         self.keyboard = keyboard
         self.typer = Typer(keyboard, sleep=sleep)
         self.tokens = TokenManager()
         self.limiter = RateLimiter(min_interval, clock=clock)
+        self.key_limiter = RateLimiter(key_min_interval, clock=clock)
         self.throttle = FailureThrottle(clock=clock)
         self.history: List[str] = []
         self.last_send: Optional[Dict[str, Any]] = None
@@ -56,11 +61,23 @@ class ChatpadCore:
             "history": list(self.history),
             "maxChars": MAX_CHARS,
             "openKey": s["open_key"],
+            "mode": s["mode"],
+            "clearBefore": s["clear_before_typing"],
+            "clearMethod": s["clear_method"],
+            "keys": list(KEY_ACTIONS),
             "lastSend": self.last_send,
         }
 
     # ---- sending ----------------------------------------------------------
-    def send(self, text: Any, press_enter: Any = True) -> Result:
+    def send(self, text: Any, press_enter: Any = True, mode: Any = None, clear: Any = None) -> Result:
+        """Type `text`. mode: 'chat' (open chat first) or 'field' (type into the focused field);
+        None uses the saved mode. clear: Field mode only, empty the field first; None uses the setting."""
+        if mode is None:
+            mode = self.settings.get("mode")
+        if mode not in MODES:
+            return 400, {"ok": False, "error": "mode must be chat or field"}
+        if clear is not None and not isinstance(clear, bool):
+            return 400, {"ok": False, "error": "clear must be true or false"}
         if not isinstance(text, str):
             return 400, {"ok": False, "error": "text must be a string"}
         ascii_text, replaced = normalize_text(text)
@@ -77,29 +94,71 @@ class ChatpadCore:
                 return 429, {"ok": False, "error": "Slow down (1 message per second)",
                              "retryAfter": round(wait, 2)}
             s = self.settings.snapshot()
-            open_key = s["open_key"]
             body = ascii_text
-            if open_key == "slash":
-                if body.startswith("/"):
-                    body = body[1:]
-                else:
-                    open_key = "enter"  # plain text: '/' would corrupt it, so open with Enter
+            clear_method = None
+            if mode == "field":
+                open_key = "none"
+                if clear if clear is not None else s["clear_before_typing"]:
+                    clear_method = s["clear_method"]
+            else:
+                open_key = s["open_key"]
+                if open_key == "slash":
+                    if body.startswith("/"):
+                        body = body[1:]
+                    else:
+                        open_key = "enter"  # plain text: '/' would corrupt it, so open with Enter
             strokes = text_to_strokes(body)
             started = time.time()
             try:
                 self.typer.type_message(strokes, open_key=open_key, press_enter=bool(press_enter),
-                                        key_delay_ms=s["key_delay_ms"], open_delay_ms=s["open_delay_ms"])
+                                        key_delay_ms=s["key_delay_ms"], open_delay_ms=s["open_delay_ms"],
+                                        clear=clear_method, clear_count=s["clear_backspace_count"])
             except Exception as e:  # uinput failures etc.
-                self._record(ascii_text, replaced, False, f"{type(e).__name__}: {e}")
+                self._record(ascii_text, replaced, False, f"{type(e).__name__}: {e}", mode=mode)
                 return 503, {"ok": False, "error": f"Typing failed on the Deck: {e}"}
-            self._record(ascii_text, replaced, True, None, time.time() - started)
-            return 200, {"ok": True, "typed": ascii_text, "replaced": replaced,
-                         "history": list(self.history)}
+            self._record(ascii_text, replaced, True, None, time.time() - started, mode=mode)
+            return 200, {"ok": True, "typed": ascii_text, "replaced": replaced, "mode": mode,
+                         "cleared": clear_method is not None, "history": list(self.history)}
         finally:
             self._busy.release()
 
+    def press_key(self, key: Any) -> Result:
+        """Press one key-row button: tab, shift_tab, enter, esc or clear. Nothing else."""
+        if key not in KEY_ACTIONS:
+            return 400, {"ok": False, "error": "key must be one of " + ", ".join(KEY_ACTIONS)}
+        if not self._busy.acquire(blocking=False):
+            return 409, {"ok": False, "error": "Still typing the previous message"}
+        try:
+            if not self.key_limiter.try_acquire():
+                return 429, {"ok": False, "error": "Slow down", "retryAfter": round(self.key_limiter.retry_after(), 2)}
+            s = self.settings.snapshot()
+            try:
+                self.typer.press(key, key_delay_ms=s["key_delay_ms"], clear_method=s["clear_method"],
+                                 clear_count=s["clear_backspace_count"])
+            except Exception as e:
+                return 503, {"ok": False, "error": f"Key press failed on the Deck: {e}"}
+            return 200, {"ok": True, "key": key}
+        finally:
+            self._busy.release()
+
+    def set_prefs(self, data: Any) -> Result:
+        """Phone-side preferences (mode, clearBefore). Persisted, so the QAM sees them too."""
+        if not isinstance(data, dict):
+            return 400, {"ok": False, "error": "Expected a JSON object"}
+        changes = {PHONE_PREFS[k]: v for k, v in data.items() if k in PHONE_PREFS}
+        if not changes:
+            return 400, {"ok": False, "error": "Nothing to change (mode, clearBefore)"}
+        for k, v in changes.items():  # validate everything before saving anything
+            if k == "clear_before_typing" and not isinstance(v, bool):
+                return 400, {"ok": False, "error": "clearBefore must be true or false"}
+            if k == "mode" and v not in MODES:
+                return 400, {"ok": False, "error": "mode must be chat or field"}
+        for k, v in changes.items():
+            self.settings.set(k, v)
+        return 200, self.public_state()
+
     def _record(self, text: str, replaced: int, ok: bool, error: Optional[str],
-                duration: float = 0.0) -> None:
+                duration: float = 0.0, mode: str = "chat") -> None:
         with self._state_lock:
             if ok:
                 self.sends += 1
@@ -115,6 +174,7 @@ class ChatpadCore:
                 "ok": ok,
                 "error": error,
                 "duration": round(duration, 2),
+                "mode": mode,
             }
 
     # ---- phrases / chips --------------------------------------------------

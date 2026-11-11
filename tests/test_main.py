@@ -78,6 +78,24 @@ class PluginLifecycleTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 await p.set_setting("enabled_evil", 1)
 
+            self.assertEqual(st["mode"], "chat")
+            st = await p.set_setting("mode", "field")
+            self.assertEqual(st["mode"], "field")
+            st = await p.set_setting("clear_method", "backspace")
+            st = await p.set_setting("clear_backspace_count", 40)
+            st = await p.set_setting("clear_before_typing", True)
+            self.assertEqual((st["clearMethod"], st["clearBackspaceCount"], st["clearBefore"]),
+                             ("backspace", 40, True))
+            with self.assertRaises(ValueError):
+                await p.set_setting("mode", "macro")
+            # the phone sees the mode the QAM set
+            def state():
+                req = urllib.request.Request(f"http://127.0.0.1:{st['port']}/api/state",
+                                             headers={"X-Chatpad-Token": st["token"]})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return json.loads(r.read())
+            self.assertEqual((await asyncio.to_thread(state))["mode"], "field")
+
             st = await p.set_enabled(False)
             self.assertFalse(st["running"])
             st = await p.set_enabled(True)
