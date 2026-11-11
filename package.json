@@ -1,5 +1,5 @@
 {
-  "name": "deck-chatpad",
+  "name": "decky-chatpad",
   "version": "0.1.0",
   "description": "Type on your phone, text gets typed into the game on your Steam Deck.",
   "type": "module",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/samgallagher/deck-chatpad.git"
+    "url": "git+https://github.com/GallagherSam/decky-chatpad.git"
   },
   "keywords": [
     "decky",
