@@ -1,0 +1,11 @@
+{
+  "name": "Chatpad",
+  "author": "Sam Gallagher",
+  "flags": ["root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["keyboard", "chat", "root"],
+    "description": "Type on your phone and Chatpad types it into the game. Built for MMO chat (WoW presets included).",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+  }
+}

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Chatpad</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #181c22; --panel2: #20262e; --line: #2c333d;
+    --text: #e8ecf1; --muted: #8b95a3; --accent: #3d8bfd; --accent2: #1f6fe0;
+    --ok: #3ccf91; --warn: #f5b942; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: calc(env(safe-area-inset-top) + 10px) 14px calc(env(safe-area-inset-bottom) + 24px); }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  header h1 { font-size: 20px; margin: 0; flex: 1; letter-spacing: .3px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 10px 14px; min-height: 44px; cursor: pointer; }
+  button:active { transform: scale(.97); }
+  button.ghost { background: transparent; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 10px; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: 0 0 auto; border-radius: 999px; padding: 8px 14px; min-height: 40px; position: relative; }
+  .chip.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip small { color: var(--muted); margin-left: 4px; }
+  .chip.sel small { color: #dbe8ff; }
+  .x { display: none; position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--err); color: #fff; font-size: 14px; line-height: 22px; text-align: center; }
+  .editing .x { display: block; }
+  .compose { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 10px; }
+  .prefix { color: var(--accent); font-weight: 600; font-size: 14px; min-height: 20px; }
+  textarea { width: 100%; min-height: 120px; resize: vertical; background: transparent; color: var(--text);
+    border: 0; outline: 0; font-size: 18px; line-height: 1.4; font-family: inherit; padding: 4px 2px; }
+  .meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+  .meta .over { color: var(--err); font-weight: 600; }
+  .warn { color: var(--warn); font-size: 13px; margin-top: 4px; display: none; }
+  .actions { display: flex; gap: 10px; margin-top: 10px; align-items: stretch; }
+  .send { flex: 1; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700;
+    font-size: 18px; min-height: 56px; }
+  .send:disabled { background: var(--panel2); border-color: var(--line); color: var(--muted); }
+  label.toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; }
+  label.toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 22px 0 8px;
+    display: flex; justify-content: space-between; align-items: center; }
+  h2 button { min-height: 32px; padding: 4px 10px; font-size: 13px; text-transform: none; letter-spacing: 0; }
+  .phrases { display: flex; flex-wrap: wrap; gap: 8px; }
+  .phrase { position: relative; }
+  .history { display: flex; flex-direction: column; gap: 6px; }
+  .history button { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty { color: var(--muted); font-size: 14px; }
+  #toast { position: fixed; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom) + 14px);
+    padding: 12px 14px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line);
+    opacity: 0; transform: translateY(10px); transition: all .2s; pointer-events: none; font-size: 15px; }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.ok { border-color: var(--ok); } #toast.err { border-color: var(--err); }
+  .help { color: var(--muted); font-size: 13px; margin-top: 22px; }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot" class="dot" title="connection"></span>
+  <h1>Chatpad</h1>
+  <button id="editBtn" class="ghost">Edit</button>
+</header>
+
+<div id="chips" class="chips"></div>
+
+<div class="compose">
+  <div id="prefix" class="prefix"></div>
+  <textarea id="msg" placeholder="Type or dictate a message..." enterkeyhint="send" autocapitalize="sentences"
+            autocomplete="off" spellcheck="true"></textarea>
+  <div class="meta"><span id="hint">Return sends. Close the Deck's quick menu first.</span><span id="count">0/255</span></div>
+  <div id="warn" class="warn"></div>
+</div>
+<div class="actions">
+  <label class="toggle"><input id="enter" type="checkbox" checked> Enter</label>
+  <button id="send" class="send">Send</button>
+</div>
+
+<h2>Quick phrases <button id="savePhrase">+ Save text</button></h2>
+<div id="phrases" class="phrases"></div>
+
+<h2>Recent</h2>
+<div id="history" class="history"></div>
+
+<p class="help">Channel chips add a prefix; tap the selected one again to clear it. Phrases send instantly with
+the selected channel. Recent messages resend exactly as typed. "Enter" off = type the text but don't submit it.
+In Edit mode you can add or remove chips and phrases.</p>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+  var MAX = 255;
+  var params = new URLSearchParams(location.search);
+  var token = params.get("t") || localStorage.getItem("chatpad.t") || "";
+  if (params.get("t")) localStorage.setItem("chatpad.t", token);
+
+  var $ = function (id) { return document.getElementById(id); };
+  var msg = $("msg"), sendBtn = $("send"), enterBox = $("enter");
+  var state = { chips: [], phrases: [], history: [] };
+  var selected = localStorage.getItem("chatpad.chip");
+  if (selected === null) selected = "";
+  var editing = false, busy = false;
+  enterBox.checked = localStorage.getItem("chatpad.enter") !== "0";
+
+  var SMART = { "‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'",
+    "“": '"', "”": '"', "„": '"', "‟": '"', "″": '"',
+    "–": "-", "—": "-", "―": "-", "−": "-", "‐": "-", "‑": "-",
+    "…": "...", " ": " ", " ": " ", " ": " ", " ": " ", " ": " ",
+    "​": "", "‌": "", "‍": "", "﻿": "", "\n": " ", "\r": " ", "\t": " " };
+
+  // Mirrors the Deck-side normalisation so the counter and warning are honest.
+  function normalize(text) {
+    var out = "", bad = [];
+    for (var ch of text) {
+      var code = ch.codePointAt(0);
+      if (code >= 0x20 && code <= 0x7e) { out += ch; continue; }
+      if (SMART.hasOwnProperty(ch)) { out += SMART[ch]; continue; }
+      var base = ch.normalize("NFKD").replace(/[̀-ͯ]/g, "");
+      if (base && /^[\x20-\x7e]+$/.test(base)) { out += base; continue; }
+      out += "?"; if (bad.indexOf(ch) < 0) bad.push(ch);
+    }
+    return { text: out, bad: bad };
+  }
+
+  function toast(text, kind) {
+    var t = $("toast");
+    t.textContent = text; t.className = "show " + (kind || "");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { t.className = ""; }, 2200);
+  }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: { "X-Chatpad-Token": token } };
+    if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(path, opts).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: "HTTP " + r.status }; })
+        .then(function (j) { j._status = r.status; return j; });
+    }).catch(function () { return { ok: false, error: "Can't reach the Deck. Same Wi-Fi? Plugin on?", _status: 0 }; });
+  }
+
+  function setConn(ok) { $("dot").className = "dot " + (ok ? "ok" : "err"); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function delBadge(onDel) {
+    var x = el("span", "x", "×");
+    x.addEventListener("click", function (ev) { ev.stopPropagation(); onDel(); });
+    return x;
+  }
+
+  function render() {
+    document.body.classList.toggle("editing", editing);
+    $("editBtn").textContent = editing ? "Done" : "Edit";
+    var chips = $("chips"); chips.textContent = "";
+    var known = false;
+    state.chips.forEach(function (c) {
+      var b = el("button", "chip" + (c.prefix === selected ? " sel" : ""));
+      b.appendChild(document.createTextNode(c.label));
+      b.appendChild(el("small", "", c.prefix.trim()));
+      if (c.prefix === selected) known = true;
+      b.addEventListener("click", function () {
+        selected = (selected === c.prefix) ? "" : c.prefix;
+        localStorage.setItem("chatpad.chip", selected);
+        render(); msg.focus();
+      });
+      b.appendChild(delBadge(function () { editList("chips", "remove", { prefix: c.prefix }); }));
+      chips.appendChild(b);
+    });
+    if (!known) selected = "";
+    if (editing) {
+      var add = el("button", "chip", "+ chip");
+      add.addEventListener("click", function () {
+        var p = prompt("Chat prefix (e.g. /3 or /w Thrall)", "/");
+        if (!p || !p.trim()) return;
+        var l = prompt("Label", p.trim()) || p.trim();
+        editList("chips", "add", { prefix: p, label: l });
+      });
+      chips.appendChild(add);
+    }
+    $("prefix").textContent = selected ? selected : "";
+
+    var ph = $("phrases"); ph.textContent = "";
+    if (!state.phrases.length) ph.appendChild(el("div", "empty", "No phrases yet. Type one and tap + Save text."));
+    state.phrases.forEach(function (p) {
+      var b = el("button", "phrase", p);
+      b.addEventListener("click", function () { if (!editing) send(selected + p, true); });
+      b.appendChild(delBadge(function () { editList("phrases", "remove", p); }));
+      ph.appendChild(b);
+    });
+
+    var h = $("history"); h.textContent = "";
+    if (!state.history.length) h.appendChild(el("div", "empty", "Nothing sent yet."));
+    state.history.forEach(function (t) {
+      var b = el("button", "", t);
+      b.addEventListener("click", function () { send(t, true); });
+      h.appendChild(b);
+    });
+    update();
+  }
+
+  function composed() { return normalize(selected + msg.value); }
+
+  function update() {
+    var n = composed();
+    var len = n.text.trim().length;
+    var c = $("count"); c.textContent = len + "/" + MAX; c.className = len > MAX ? "over" : "";
+    var w = $("warn");
+    if (n.bad.length) {
+      w.style.display = "block";
+      w.textContent = "Will type as '?': " + n.bad.join(" ") + "  (only basic English characters in v1)";
+    } else { w.style.display = "none"; }
+    sendBtn.disabled = busy || !msg.value.trim() || len > MAX;
+  }
+
+  function send(text, fromShortcut) {
+    if (busy) return;
+    var n = normalize(text);
+    if (!n.text.trim()) return;
+    if (n.text.trim().length > MAX) { toast("Too long for chat (" + n.text.trim().length + "/" + MAX + ")", "err"); return; }
+    busy = true; update();
+    api("POST", "/api/send", { text: text, enter: enterBox.checked }).then(function (r) {
+      busy = false;
+      if (r.ok) {
+        setConn(true);
+        if (!fromShortcut) msg.value = "";
+        state.history = r.history || state.history;
+        toast("Sent" + (r.replaced ? " (" + r.replaced + " replaced with ?)" : ""), "ok");
+        render();
+      } else {
+        setConn(r._status !== 0 && r._status !== 401);
+        toast(r.error || "Failed", "err");
+        update();
+      }
+    });
+  }
+
+  function editList(kind, action, item) {
+    api("POST", "/api/list", { kind: kind, action: action, item: item }).then(function (r) {
+      if (r.ok) { state = r; render(); } else toast(r.error || "Failed", "err");
+    });
+  }
+
+  function load() {
+    if (!token) { setConn(false); toast("No token. Scan the QR code in the Deck's Chatpad panel.", "err"); return; }
+    api("GET", "/api/state").then(function (r) {
+      setConn(r.ok);
+      if (r.ok) { state = r; MAX = r.maxChars || MAX; render(); } else toast(r.error || "Failed to load", "err");
+    });
+  }
+
+  msg.addEventListener("input", update);
+  msg.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (!sendBtn.disabled) send(selected + msg.value, false);
+    }
+  });
+  sendBtn.addEventListener("click", function () { send(selected + msg.value, false); });
+  enterBox.addEventListener("change", function () { localStorage.setItem("chatpad.enter", enterBox.checked ? "1" : "0"); });
+  $("editBtn").addEventListener("click", function () { editing = !editing; render(); });
+  $("savePhrase").addEventListener("click", function () {
+    var t = msg.value.trim();
+    if (!t) { toast("Type the phrase in the box first", "err"); return; }
+    editList("phrases", "add", t);
+  });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+  load();
+})();
+</script>
+</body>
+</html>
